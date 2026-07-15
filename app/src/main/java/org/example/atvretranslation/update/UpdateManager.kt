@@ -24,7 +24,7 @@ data class AppUpdate(
 
 object UpdateManager {
     private const val MANIFEST_URL =
-        "https://raw.githubusercontent.com/yarShpep/AnimeLibTV/main/update.json"
+        "https://raw.githubusercontent.com/yarShpep/AnimeLibTV/refs/heads/main/update.json"
     private const val PREFS = "app_updates"
     private const val PENDING_APK = "pending_apk"
     private const val APK_NAME = "AnimeLibTV-update.apk"
@@ -79,16 +79,18 @@ object UpdateManager {
 
             val actualHash = digest.digest().joinToString("") { "%02x".format(it) }
             require(actualHash == update.sha256) { "SHA-256 обновления не совпал" }
-            val archivePackage = context.packageManager
-                .getPackageArchiveInfo(temporary.absolutePath, 0)
-                ?.packageName
-            require(archivePackage == context.packageName) { "APK имеет другой package name" }
-
             target.delete()
             require(temporary.renameTo(target)) { "Не удалось сохранить APK" }
+            val archivePackage = context.packageManager
+                .getPackageArchiveInfo(target.absolutePath, 0)
+                ?.packageName
+            if (archivePackage != context.packageName) {
+                target.delete()
+                error("APK имеет другой package name")
+            }
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit().putString(PENDING_APK, target.absolutePath).apply()
-            promptInstallOrPermission(context, target)
+            withContext(Dispatchers.Main) { promptInstallOrPermission(context, target) }
         }
 
     fun installPendingIfAllowed(context: Context) {
