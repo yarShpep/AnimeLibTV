@@ -24,13 +24,13 @@ data class AppUpdate(
 
 object UpdateManager {
     private const val MANIFEST_URL =
-        "https://raw.githubusercontent.com/yarShpep/AnimeLibTV/refs/heads/main/update.json"
+        "https://api.github.com/repos/yarShpep/AnimeLibTV/contents/update.json?ref=main"
     private const val PREFS = "app_updates"
     private const val PENDING_APK = "pending_apk"
     private const val APK_NAME = "AnimeLibTV-update.apk"
 
     suspend fun check(context: Context): AppUpdate? = withContext(Dispatchers.IO) {
-        val connection = openConnection(MANIFEST_URL)
+        val connection = openConnection(MANIFEST_URL, "application/vnd.github.raw+json")
         try {
             require(connection.responseCode == HttpURLConnection.HTTP_OK) {
                 "GitHub вернул HTTP ${connection.responseCode}"
@@ -57,7 +57,7 @@ object UpdateManager {
             temporary.delete()
 
             val digest = MessageDigest.getInstance("SHA-256")
-            val connection = openConnection(update.apkUrl)
+            val connection = openConnection(update.apkUrl, "application/vnd.android.package-archive")
             try {
                 require(connection.responseCode in 200..299) {
                     "Скачивание APK: HTTP ${connection.responseCode}"
@@ -144,12 +144,12 @@ object UpdateManager {
         else info.versionCode.toLong()
     }
 
-    private fun openConnection(url: String): HttpURLConnection =
+    private fun openConnection(url: String, accept: String): HttpURLConnection =
         (URI(url).toURL().openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 30_000
             instanceFollowRedirects = true
-            setRequestProperty("Accept", "application/json, application/vnd.android.package-archive")
+            setRequestProperty("Accept", accept)
             setRequestProperty("User-Agent", "AnimeLibTV-Updater")
         }
 }
