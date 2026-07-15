@@ -177,9 +177,6 @@ private fun Header(
         Text("AnimeLib", fontSize = 28.sp, fontWeight = FontWeight.Bold)
         Text(" TV", fontSize = 28.sp, color = Purple, fontWeight = FontWeight.Bold)
         Spacer(Modifier.weight(1f))
-        state.updateMessage?.let {
-            Text(it, color = SoftText, modifier = Modifier.padding(end = 18.dp))
-        }
         Button(
             onClick = if (state.availableUpdate != null) onInstallUpdate else onCheckUpdate,
             enabled = !state.updateBusy,
@@ -239,6 +236,13 @@ private fun HomeScreen(state: AppUiState, viewModel: AppViewModel) {
             onCheckUpdate = { viewModel.checkForUpdates() },
             onInstallUpdate = viewModel::installAvailableUpdate,
         )
+        state.updateMessage?.let {
+            Text(
+                it,
+                color = SoftText,
+                modifier = Modifier.padding(horizontal = 48.dp, vertical = 4.dp),
+            )
+        }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 48.dp),
             verticalAlignment = Alignment.CenterVertically,
