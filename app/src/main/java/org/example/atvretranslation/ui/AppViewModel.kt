@@ -48,6 +48,7 @@ data class PlaybackRequest(
     val teamId: Long,
     val translationTypeId: Int,
     val subtitles: List<SubtitleTrack>,
+    val previousEpisodeNumber: String?,
     val nextEpisodeNumber: String?,
 )
 
@@ -194,19 +195,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         playResolved(anime, episode, source, quality, stored)
     }
 
-    fun playNextEpisode() {
+    fun playPreviousEpisode() = playAdjacentEpisode(forward = false)
+
+    fun playNextEpisode() = playAdjacentEpisode(forward = true)
+
+    private fun playAdjacentEpisode(forward: Boolean) {
         val snapshot = _state.value
         if (snapshot.loading) return
         val current = snapshot.playback ?: return
         val anime = snapshot.selectedAnime ?: return setError("Не выбрано аниме")
-        val next = findNextEpisode(snapshot.episodes, current.episodeId)
-            ?: return setError("Следующей серии пока нет")
+        val target = findAdjacentEpisode(snapshot.episodes, current.episodeId, forward)
+            ?: return setError(
+                if (forward) "Следующей серии пока нет"
+                else "Предыдущей серии нет",
+            )
 
         runRequest {
-            val loadedEpisode = client.episode(next.id)
+            val loadedEpisode = client.episode(target.id)
             val constants = snapshot.constants ?: client.constants()
             val source = chooseSource(loadedEpisode, current.teamId, current.translationTypeId)
-                ?: error("Для серии ${next.number} нет встроенного плеера AnimeLib")
+                ?: error("Для серии ${target.number} нет встроенного плеера AnimeLib")
             val quality = source.qualities.firstOrNull { it.height == current.quality }
                 ?: source.qualities.sortedByPlaybackPriority().first()
 
@@ -226,7 +234,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             upstreamUrl = current.url,
             subtitle = current.subtitles.firstOrNull(),
         )
-        val next = findNextEpisode(snapshot.episodes, current.episodeId)
+        val next = findAdjacentEpisode(snapshot.episodes, current.episodeId, forward = true)
         if (next == null) {
             VlcProxyRegistry.open(getApplication(), listOf(currentItem))
                 .onFailure { setError(it.message ?: "Не удалось открыть VLC") }
@@ -484,9 +492,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             teamId = source.team.id,
                             translationTypeId = source.translationTypeId,
                             subtitles = source.subtitles.preferredForPlayback(),
-                            nextEpisodeNumber = findNextEpisode(
+                            previousEpisodeNumber = findAdjacentEpisode(
                                 episodes = it.episodes,
                                 currentEpisodeId = episode.id,
+                                forward = false,
+                            )?.number,
+                            nextEpisodeNumber = findAdjacentEpisode(
+                                episodes = it.episodes,
+                                currentEpisodeId = episode.id,
+                                forward = true,
                             )?.number,
                         ),
                     )
@@ -497,14 +511,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun setError(message: String) = _state.update { it.copy(error = message) }
 
-    private fun findNextEpisode(episodes: List<Episode>, currentEpisodeId: Long): Episode? {
+    private fun findAdjacentEpisode(
+        episodes: List<Episode>,
+        currentEpisodeId: Long,
+        forward: Boolean,
+    ): Episode? {
         val ordered = episodes.sortedWith(
             compareBy<Episode> { it.itemNumber ?: Int.MAX_VALUE }
                 .thenBy { it.number.toDoubleOrNull() ?: Double.MAX_VALUE }
                 .thenBy(Episode::id),
         )
         val currentIndex = ordered.indexOfFirst { it.id == currentEpisodeId }
-        return ordered.getOrNull(currentIndex + 1).takeIf { currentIndex >= 0 }
+        if (currentIndex < 0) return null
+        return ordered.getOrNull(currentIndex + if (forward) 1 else -1)
     }
 
     private fun chooseSource(

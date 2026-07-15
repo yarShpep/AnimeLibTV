@@ -1,7 +1,9 @@
 package org.example.atvretranslation.ui
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.net.Uri
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -142,6 +144,7 @@ fun AnimeLibTvApp(viewModel: AppViewModel) {
                             PlayerScreen(
                                 request = it,
                                 onProgress = viewModel::recordPlaybackProgress,
+                                onPreviousEpisode = viewModel::playPreviousEpisode,
                                 onNextEpisode = viewModel::playNextEpisode,
                                 onOpenVlc = viewModel::playInVlc,
                             )
@@ -789,15 +792,12 @@ private fun SourceRow(source: PlayerSource, viewModel: AppViewModel) {
 private fun PlayerScreen(
     request: PlaybackRequest,
     onProgress: (request: PlaybackRequest, positionMs: Long, durationMs: Long) -> Unit,
+    onPreviousEpisode: () -> Unit,
     onNextEpisode: () -> Unit,
     onOpenVlc: () -> Unit,
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
-    var subtitlesEnabled by remember(request.url, request.subtitles) {
-        mutableStateOf(request.subtitles.isNotEmpty())
-    }
-    var controlsVisible by remember(request.url) { mutableStateOf(true) }
     DisposableEffect(hostView, request.url) {
         hostView.keepScreenOn = true
         onDispose { hostView.keepScreenOn = false }
@@ -864,7 +864,7 @@ private fun PlayerScreen(
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { viewContext ->
-                PlayerView(viewContext).apply {
+                TvPlayerView(viewContext).apply {
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -873,61 +873,97 @@ private fun PlayerScreen(
                     controllerShowTimeoutMs = 4_000
                     setControllerVisibilityListener(
                         PlayerView.ControllerVisibilityListener { visibility ->
-                            controlsVisible = visibility == View.VISIBLE
+                            if (visibility != View.VISIBLE) post { requestFocus() }
                         },
                     )
+                    setShowPreviousButton(false)
+                    setShowNextButton(false)
+                    setShowSubtitleButton(request.subtitles.isNotEmpty())
                     this.player = player
-                    requestFocus()
-                    post { showController() }
+                    configureTvPlayerActions(
+                        request = request,
+                        onPreviousEpisode = onPreviousEpisode,
+                        onNextEpisode = onNextEpisode,
+                        onOpenVlc = onOpenVlc,
+                    )
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                    post {
+                        requestFocus()
+                        showController()
+                    }
                 }
             },
-            update = { it.player = player },
+            update = {
+                it.player = player
+                it.setShowSubtitleButton(request.subtitles.isNotEmpty())
+                it.configureTvPlayerActions(
+                    request = request,
+                    onPreviousEpisode = onPreviousEpisode,
+                    onNextEpisode = onNextEpisode,
+                    onOpenVlc = onOpenVlc,
+                )
+            },
             modifier = Modifier.fillMaxSize(),
         )
-        if (controlsVisible) {
-            Row(
-                Modifier.align(Alignment.TopStart).fillMaxWidth()
-                    .background(Color(0x99000000)).padding(horizontal = 36.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column {
-                    Text(request.title, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        buildString {
-                            append("${request.quality}p · Media3")
-                            if (request.startPositionMs > 0L) {
-                                append(" · продолжение с ${formatTime(request.startPositionMs)}")
-                            }
-                        },
-                        color = SoftText,
-                        fontSize = 13.sp,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                request.nextEpisodeNumber?.let { nextNumber ->
-                    Button(
-                        onClick = onNextEpisode,
-                        modifier = Modifier.padding(end = 12.dp),
-                    ) {
-                        Text("Следующая: $nextNumber")
-                    }
-                }
-                if (request.subtitles.isNotEmpty()) {
-                    Button(
-                        onClick = {
-                            subtitlesEnabled = !subtitlesEnabled
-                            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
-                                .build()
-                        },
-                        modifier = Modifier.padding(end = 12.dp),
-                    ) {
-                        Text(if (subtitlesEnabled) "Субтитры: вкл" else "Субтитры: выкл")
-                    }
-                }
-                Button(onClick = onOpenVlc) { Text("VLC · очередь серий") }
+    }
+}
+
+@OptIn(UnstableApi::class)
+private class TvPlayerView(context: Context) : PlayerView(context) {
+    private var consumeKeyUp = false
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.isTvNavigationKey()) {
+            if (event.action == KeyEvent.ACTION_DOWN && !isControllerFullyVisible) {
+                showController()
+                consumeKeyUp = true
+                return true
+            }
+            if (event.action == KeyEvent.ACTION_UP && consumeKeyUp) {
+                consumeKeyUp = false
+                return true
             }
         }
+        return super.dispatchKeyEvent(event)
+    }
+}
+
+private fun KeyEvent.isTvNavigationKey(): Boolean = when (keyCode) {
+    KeyEvent.KEYCODE_DPAD_CENTER,
+    KeyEvent.KEYCODE_ENTER,
+    KeyEvent.KEYCODE_DPAD_LEFT,
+    KeyEvent.KEYCODE_DPAD_RIGHT,
+    KeyEvent.KEYCODE_DPAD_UP,
+    KeyEvent.KEYCODE_DPAD_DOWN,
+    -> true
+    else -> false
+}
+
+private fun PlayerView.configureTvPlayerActions(
+    request: PlaybackRequest,
+    onPreviousEpisode: () -> Unit,
+    onNextEpisode: () -> Unit,
+    onOpenVlc: () -> Unit,
+) {
+    checkNotNull(findViewById<View>(org.example.atvretranslation.R.id.tv_previous_episode)).apply {
+        val available = request.previousEpisodeNumber != null
+        isEnabled = available
+        alpha = if (available) 1f else 0.3f
+        contentDescription = request.previousEpisodeNumber?.let { "Предыдущая серия: $it" }
+            ?: "Предыдущей серии нет"
+        setOnClickListener { onPreviousEpisode() }
+    }
+    checkNotNull(findViewById<View>(org.example.atvretranslation.R.id.tv_next_episode)).apply {
+        val available = request.nextEpisodeNumber != null
+        isEnabled = available
+        alpha = if (available) 1f else 0.3f
+        contentDescription = request.nextEpisodeNumber?.let { "Следующая серия: $it" }
+            ?: "Следующей серии нет"
+        setOnClickListener { onNextEpisode() }
+    }
+    checkNotNull(findViewById<View>(org.example.atvretranslation.R.id.tv_open_vlc)).apply {
+        setOnClickListener { onOpenVlc() }
     }
 }
 

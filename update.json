@@ -1,7 +1,7 @@
 {
-  "versionCode": 12,
-  "versionName": "0.5.3",
-  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.5.3/AnimeLibTV-0.5.3.apk",
-  "sha256": "f46e1814d31edc7cae6d1427dd63d9b5d552d123c4f2ca34edf0216ffeae890c",
-  "notes": "Обновления внутри приложения, запрет сна при просмотре, VLC-очередь серий и автоскрытие меню плеера."
+  "versionCode": 13,
+  "versionName": "0.6.0",
+  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.6.0/AnimeLibTV-0.6.0.apk",
+  "sha256": "8f341a4d901852b780ca75b976b8d37dd9fed07669bd80b48ec5afdb5f3d606e",
+  "notes": "Верхнее меню плеера удалено; переключение серий перенесено на стандартные кнопки Previous/Next, а VLC — в нижнюю панель Media3."
 }
