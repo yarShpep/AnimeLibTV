@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.ATVRetranslation" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:colorAccent">#8B5CF6</item>
+        <item name="android:navigationBarColor">#080A0F</item>
+    </style>
+</resources>
