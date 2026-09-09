@@ -1,7 +1,7 @@
 {
-  "versionCode": 14,
-  "versionName": "0.6.1",
-  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.6.1/AnimeLibTV-0.6.1.apk",
-  "sha256": "309dd31eba01c6e93a22396b7715c1e01045d4a6963c52930e85e4c15a9cc58a",
-  "notes": "Исправлено воспроизведение 4K для серий с новым CDN: сначала используется прежняя схема, а при сбое плеер автоматически переключается на запасной адрес. В плеере добавлен номер текущей серии."
+  "versionCode": 15,
+  "versionName": "0.6.2",
+  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.6.2/AnimeLibTV-0.6.2.apk",
+  "sha256": "beabff758fab590a42334133bda55de2437a6aa851b80cf2a242815f9cb47724",
+  "notes": "Исправлена ошибка доступа к файлу при скачивании обновления на Android TV. Также включены автоматическое переключение CDN для 4K и номер текущей серии в плеере."
 }
