@@ -1,7 +1,7 @@
 {
-  "versionCode": 13,
-  "versionName": "0.6.0",
-  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.6.0/AnimeLibTV-0.6.0.apk",
-  "sha256": "8f341a4d901852b780ca75b976b8d37dd9fed07669bd80b48ec5afdb5f3d606e",
-  "notes": "Верхнее меню плеера удалено; переключение серий перенесено на стандартные кнопки Previous/Next, а VLC — в нижнюю панель Media3."
+  "versionCode": 14,
+  "versionName": "0.6.1",
+  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.6.1/AnimeLibTV-0.6.1.apk",
+  "sha256": "309dd31eba01c6e93a22396b7715c1e01045d4a6963c52930e85e4c15a9cc58a",
+  "notes": "Исправлено воспроизведение 4K для серий с новым CDN: сначала используется прежняя схема, а при сбое плеер автоматически переключается на запасной адрес. В плеере добавлен номер текущей серии."
 }
