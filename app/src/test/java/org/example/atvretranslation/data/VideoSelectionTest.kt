@@ -45,6 +45,50 @@ class VideoSelectionTest {
     }
 
     @Test
+    fun `fallback urls keep legacy first then player domain and remaining mirrors`() {
+        val constants = VideoConstants(
+            servers = listOf(
+                VideoServer("main", "Основной", "https://video1.example/.as/"),
+                VideoServer("secondary_1", "Резервный 1", "https://video2.example/"),
+                VideoServer("secondary_2", "Резервный 2", "https://video3.example/"),
+            ),
+            distributionAnimeIds = emptySet(),
+            distributionUrl = "https://distribution.example/",
+        )
+        val quality = VideoQuality(2160, "anime/12/players/7/video.mp4")
+
+        assertEquals(
+            listOf(
+                "https://video1.example/.as/anime/12/players/7/video.mp4",
+                "https://video2.example/anime/12/players/7/video.mp4",
+                "https://video3.example/anime/12/players/7/video.mp4",
+            ),
+            buildVideoUrls(quality, constants, videoDomain = "secondary_1"),
+        )
+    }
+
+    @Test
+    fun `fallback urls deduplicate distribution and player domain`() {
+        val constants = VideoConstants(
+            servers = listOf(
+                VideoServer("main", "Основной", "https://video1.example/.as/"),
+                VideoServer("secondary_1", "Резервный 1", "https://video2.example/"),
+            ),
+            distributionAnimeIds = setOf("12"),
+            distributionUrl = "https://video2.example/",
+        )
+        val quality = VideoQuality(2160, "anime/12/players/7/video.mp4")
+
+        assertEquals(
+            listOf(
+                "https://video2.example/anime/12/players/7/video.mp4",
+                "https://video1.example/.as/anime/12/players/7/video.mp4",
+            ),
+            buildVideoUrls(quality, constants, videoDomain = "secondary_1"),
+        )
+    }
+
+    @Test
     fun `subtitle variants keep one track per language and prefer ass`() {
         val subtitles = listOf(
             SubtitleTrack("vtt", "https://example/sub.vtt", label = "Русский"),

@@ -6,6 +6,7 @@ import android.net.Uri
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -49,6 +50,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,6 +78,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -798,11 +801,29 @@ private fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
-    DisposableEffect(hostView, request.url) {
+    val candidateUrls = remember(request.url, request.fallbackUrls) {
+        (listOf(request.url) + request.fallbackUrls).distinct()
+    }
+    var candidateIndex by remember(candidateUrls) { mutableIntStateOf(0) }
+    var playerMessage by remember(candidateUrls) { mutableStateOf<String?>(null) }
+    val mediaItemForUrl: (String) -> MediaItem = remember(request.subtitles) {
+        { url ->
+            MediaItem.Builder()
+                .setUri(url)
+                .setMimeType(MimeTypes.VIDEO_MP4)
+                .setSubtitleConfigurations(
+                    request.subtitles.mapIndexed { index, subtitle ->
+                        subtitle.toMedia3Configuration(isDefault = index == 0)
+                    },
+                )
+                .build()
+        }
+    }
+    DisposableEffect(hostView, candidateUrls) {
         hostView.keepScreenOn = true
         onDispose { hostView.keepScreenOn = false }
     }
-    val player = remember(request.url, request.startPositionMs, request.subtitles) {
+    val player = remember(candidateUrls, request.startPositionMs, request.subtitles) {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(AnimeLibClient.USER_AGENT)
             .setConnectTimeoutMs(15_000)
@@ -818,26 +839,41 @@ private fun PlayerScreen(
             .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(httpFactory))
             .build()
             .apply {
-                setMediaItem(
-                    MediaItem.Builder()
-                        .setUri(request.url)
-                        .setMimeType(MimeTypes.VIDEO_MP4)
-                        .setSubtitleConfigurations(
-                            request.subtitles.mapIndexed { index, subtitle ->
-                                subtitle.toMedia3Configuration(isDefault = index == 0)
-                            },
-                        )
-                        .build(),
-                )
+                setMediaItem(mediaItemForUrl(candidateUrls.first()), request.startPositionMs)
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setSelectTextByDefault(request.subtitles.isNotEmpty())
                     .setSelectUndeterminedTextLanguage(true)
                     .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, request.subtitles.isEmpty())
                     .build()
-                if (request.startPositionMs > 0L) seekTo(request.startPositionMs)
                 prepare()
                 playWhenReady = true
             }
+    }
+    val switchToNextCandidate: () -> Boolean = {
+        val nextIndex = candidateIndex + 1
+        if (nextIndex >= candidateUrls.size) {
+            false
+        } else {
+            val resumePositionMs = player.currentPosition.coerceAtLeast(request.startPositionMs)
+            candidateIndex = nextIndex
+            playerMessage = "Переключаю видеосервер…"
+            player.setMediaItem(mediaItemForUrl(candidateUrls[nextIndex]), resumePositionMs)
+            player.prepare()
+            player.playWhenReady = true
+            true
+        }
+    }
+    LaunchedEffect(player, candidateIndex) {
+        val attemptedIndex = candidateIndex
+        delay(CDN_STARTUP_TIMEOUT_MS)
+        if (
+            candidateIndex == attemptedIndex &&
+            player.playbackState == Player.STATE_BUFFERING
+        ) {
+            if (!switchToNextCandidate()) {
+                playerMessage = "Не удалось загрузить видео ни с одного сервера"
+            }
+        }
     }
     LaunchedEffect(player) {
         while (isActive) {
@@ -848,8 +884,18 @@ private fun PlayerScreen(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) playerMessage = null
                 if (playbackState == Player.STATE_ENDED) {
                     onProgress(request, player.currentPosition, player.safeDuration())
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                if (error.isCdnFallbackEligible() && switchToNextCandidate()) return
+                playerMessage = if (error.isCdnFallbackEligible()) {
+                    "Не удалось загрузить видео ни с одного сервера"
+                } else {
+                    "Ошибка воспроизведения: ${error.errorCodeName}"
                 }
             }
         }
@@ -906,8 +952,23 @@ private fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        playerMessage?.let { message ->
+            Text(
+                text = message,
+                color = Color.White,
+                fontSize = 18.sp,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color(0xCC11131A), RoundedCornerShape(8.dp))
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+            )
+        }
     }
 }
+
+private const val CDN_STARTUP_TIMEOUT_MS = 25_000L
+
+private fun PlaybackException.isCdnFallbackEligible(): Boolean = errorCode in 2000..2999
 
 @OptIn(UnstableApi::class)
 private class TvPlayerView(context: Context) : PlayerView(context) {
@@ -946,6 +1007,10 @@ private fun PlayerView.configureTvPlayerActions(
     onNextEpisode: () -> Unit,
     onOpenVlc: () -> Unit,
 ) {
+    checkNotNull(findViewById<TextView>(org.example.atvretranslation.R.id.tv_episode_number)).apply {
+        text = "Серия ${request.episodeNumber}"
+        contentDescription = text
+    }
     checkNotNull(findViewById<View>(org.example.atvretranslation.R.id.tv_previous_episode)).apply {
         val available = request.previousEpisodeNumber != null
         isEnabled = available

@@ -37,6 +37,7 @@ data class PlayerSource(
     val team: Team,
     val translationTypeId: Int,
     val translationType: String,
+    val videoDomain: String? = null,
     val qualities: List<VideoQuality>,
     val subtitles: List<SubtitleTrack> = emptyList(),
 ) {
@@ -194,3 +195,25 @@ fun buildVideoUrl(
     }
     return base + quality.href
 }
+
+/**
+ * Keeps the legacy URL first, then follows the server preference returned for this player by
+ * AnimeLib, and finally tries the remaining mirrors. Duplicate URLs are removed while preserving
+ * that order.
+ */
+fun buildVideoUrls(
+    quality: VideoQuality,
+    constants: VideoConstants,
+    videoDomain: String?,
+): List<String> = buildList {
+    add(buildVideoUrl(quality, constants))
+    val fallbackServerIds = buildList {
+        videoDomain?.takeIf(String::isNotBlank)?.let(::add)
+        constants.servers.forEach { add(it.id) }
+    }
+    fallbackServerIds.distinct().forEach { serverId ->
+        constants.servers.firstOrNull { it.id == serverId }?.let { server ->
+            add(server.url + quality.href)
+        }
+    }
+}.distinct()

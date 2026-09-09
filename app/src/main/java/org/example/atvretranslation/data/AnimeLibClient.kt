@@ -236,6 +236,7 @@ class AnimeLibClient(private val tokenStore: SecureTokenStore) {
             team = json.optJSONObject("team")?.let(::parseTeam) ?: Team(-1, "Неизвестная команда"),
             translationTypeId = translation.optInt("id"),
             translationType = translation.optString("label", "Перевод"),
+            videoDomain = json.optNullableString("video_domain"),
             qualities = qualities,
             subtitles = subtitles,
         )

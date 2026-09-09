@@ -22,6 +22,7 @@ import org.example.atvretranslation.data.SubtitleTrack
 import org.example.atvretranslation.data.VideoConstants
 import org.example.atvretranslation.data.VideoQuality
 import org.example.atvretranslation.data.buildVideoUrl
+import org.example.atvretranslation.data.buildVideoUrls
 import org.example.atvretranslation.data.preferredForPlayback
 import org.example.atvretranslation.data.resolveContinueTarget
 import org.example.atvretranslation.data.sortedByPlaybackPriority
@@ -34,6 +35,7 @@ enum class Screen { HOME, DETAILS, SOURCES, PLAYER }
 
 data class PlaybackRequest(
     val url: String,
+    val fallbackUrls: List<String>,
     val title: String,
     val quality: Int,
     val startPositionMs: Long,
@@ -471,13 +473,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         startPositionMs: Long,
     ) {
         val constants = _state.value.constants ?: return setError("Не загружены адреса видеосерверов")
-        runCatching { buildVideoUrl(quality, constants) }
-            .onSuccess { url ->
+        runCatching { buildVideoUrls(quality, constants, source.videoDomain) }
+            .onSuccess { urls ->
                 _state.update {
                     it.copy(
                         screen = Screen.PLAYER,
                         playback = PlaybackRequest(
-                            url = url,
+                            url = urls.first(),
+                            fallbackUrls = urls.drop(1),
                             title = "${episode.displayName} · ${source.team.name}",
                             quality = quality.height,
                             startPositionMs = startPositionMs,
