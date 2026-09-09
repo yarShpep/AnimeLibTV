@@ -51,10 +51,15 @@ object UpdateManager {
 
     suspend fun downloadAndInstall(context: Context, update: AppUpdate) =
         withContext(Dispatchers.IO) {
-            val directory = File(context.getExternalFilesDir(null), "updates").apply { mkdirs() }
+            val directory = File(context.filesDir, "updates")
+            require(directory.isDirectory || directory.mkdirs()) {
+                "Не удалось создать внутреннюю папку обновлений"
+            }
             val target = File(directory, APK_NAME)
             val temporary = File(directory, "$APK_NAME.part")
-            temporary.delete()
+            require(!temporary.exists() || temporary.delete()) {
+                "Не удалось удалить временный файл обновления"
+            }
 
             val digest = MessageDigest.getInstance("SHA-256")
             val connection = openConnection(update.apkUrl, "application/vnd.android.package-archive")
