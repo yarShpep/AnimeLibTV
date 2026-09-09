@@ -801,11 +801,9 @@ private fun PlayerScreen(
 ) {
     val context = LocalContext.current
     val hostView = LocalView.current
-    val candidateUrls = remember(request.url, request.fallbackUrls) {
-        (listOf(request.url) + request.fallbackUrls).distinct()
-    }
-    var candidateIndex by remember(candidateUrls) { mutableIntStateOf(0) }
-    var playerMessage by remember(candidateUrls) { mutableStateOf<String?>(null) }
+    val videoCandidates = request.videoCandidates
+    var candidateIndex by remember(videoCandidates) { mutableIntStateOf(0) }
+    var playerMessage by remember(videoCandidates) { mutableStateOf<String?>(null) }
     val mediaItemForUrl: (String) -> MediaItem = remember(request.subtitles) {
         { url ->
             MediaItem.Builder()
@@ -819,11 +817,11 @@ private fun PlayerScreen(
                 .build()
         }
     }
-    DisposableEffect(hostView, candidateUrls) {
+    DisposableEffect(hostView, videoCandidates) {
         hostView.keepScreenOn = true
         onDispose { hostView.keepScreenOn = false }
     }
-    val player = remember(candidateUrls, request.startPositionMs, request.subtitles) {
+    val player = remember(videoCandidates, request.startPositionMs, request.subtitles) {
         val httpFactory = DefaultHttpDataSource.Factory()
             .setUserAgent(AnimeLibClient.USER_AGENT)
             .setConnectTimeoutMs(15_000)
@@ -839,7 +837,7 @@ private fun PlayerScreen(
             .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(httpFactory))
             .build()
             .apply {
-                setMediaItem(mediaItemForUrl(candidateUrls.first()), request.startPositionMs)
+                setMediaItem(mediaItemForUrl(videoCandidates.first().url), request.startPositionMs)
                 trackSelectionParameters = trackSelectionParameters.buildUpon()
                     .setSelectTextByDefault(request.subtitles.isNotEmpty())
                     .setSelectUndeterminedTextLanguage(true)
@@ -849,15 +847,28 @@ private fun PlayerScreen(
                 playWhenReady = true
             }
     }
-    val switchToNextCandidate: () -> Boolean = {
-        val nextIndex = candidateIndex + 1
-        if (nextIndex >= candidateUrls.size) {
+    val switchToNextCandidate: (Boolean) -> Boolean = { requireLowerQuality ->
+        val currentCandidate = videoCandidates[candidateIndex]
+        val nextIndex = if (requireLowerQuality) {
+            videoCandidates.indexOfFirstFrom(candidateIndex + 1) {
+                it.quality < currentCandidate.quality
+            }
+        } else {
+            candidateIndex + 1
+        }
+        if (nextIndex !in videoCandidates.indices) {
             false
         } else {
+            val nextCandidate = videoCandidates[nextIndex]
             val resumePositionMs = player.currentPosition.coerceAtLeast(request.startPositionMs)
             candidateIndex = nextIndex
-            playerMessage = "Переключаю видеосервер…"
-            player.setMediaItem(mediaItemForUrl(candidateUrls[nextIndex]), resumePositionMs)
+            playerMessage = if (nextCandidate.quality < currentCandidate.quality) {
+                "${currentCandidate.quality.qualityLabel()} не поддерживается; " +
+                    "включаю ${nextCandidate.quality.qualityLabel()}…"
+            } else {
+                "Переключаю видеосервер…"
+            }
+            player.setMediaItem(mediaItemForUrl(nextCandidate.url), resumePositionMs)
             player.prepare()
             player.playWhenReady = true
             true
@@ -870,7 +881,7 @@ private fun PlayerScreen(
             candidateIndex == attemptedIndex &&
             player.playbackState == Player.STATE_BUFFERING
         ) {
-            if (!switchToNextCandidate()) {
+            if (!switchToNextCandidate(false)) {
                 playerMessage = "Не удалось загрузить видео ни с одного сервера"
             }
         }
@@ -891,7 +902,8 @@ private fun PlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                if (error.isCdnFallbackEligible() && switchToNextCandidate()) return
+                if (error.isDecoderFallbackEligible() && switchToNextCandidate(true)) return
+                if (error.isCdnFallbackEligible() && switchToNextCandidate(false)) return
                 playerMessage = if (error.isCdnFallbackEligible()) {
                     "Не удалось загрузить видео ни с одного сервера"
                 } else {
@@ -969,6 +981,17 @@ private fun PlayerScreen(
 private const val CDN_STARTUP_TIMEOUT_MS = 25_000L
 
 private fun PlaybackException.isCdnFallbackEligible(): Boolean = errorCode in 2000..2999
+
+private fun PlaybackException.isDecoderFallbackEligible(): Boolean = errorCode in 4000..4999
+
+private fun Int.qualityLabel(): String = if (this >= 2160) "4K" else "${this}p"
+
+private inline fun <T> List<T>.indexOfFirstFrom(startIndex: Int, predicate: (T) -> Boolean): Int {
+    for (index in startIndex.coerceAtLeast(0)..lastIndex) {
+        if (predicate(this[index])) return index
+    }
+    return -1
+}
 
 @OptIn(UnstableApi::class)
 private class TvPlayerView(context: Context) : PlayerView(context) {

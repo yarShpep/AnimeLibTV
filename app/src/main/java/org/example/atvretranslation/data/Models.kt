@@ -47,6 +47,8 @@ data class PlayerSource(
 
 data class VideoQuality(val height: Int, val href: String)
 
+data class VideoStreamCandidate(val quality: Int, val url: String)
+
 data class SubtitleTrack(
     val format: String,
     val src: String,
@@ -217,3 +219,24 @@ fun buildVideoUrls(
         }
     }
 }.distinct()
+
+/**
+ * Tries every server for the selected quality first, then progressively lower qualities.
+ * Decoder failures can therefore skip mirrors of the same file and downgrade gracefully.
+ */
+fun buildVideoCandidates(
+    selectedQuality: VideoQuality,
+    availableQualities: List<VideoQuality>,
+    constants: VideoConstants,
+    videoDomain: String?,
+): List<VideoStreamCandidate> {
+    val qualities = (listOf(selectedQuality) + availableQualities
+        .filter { it.height < selectedQuality.height }
+        .sortedByPlaybackPriority())
+        .distinctBy(VideoQuality::height)
+    return qualities.flatMap { quality ->
+        buildVideoUrls(quality, constants, videoDomain).map { url ->
+            VideoStreamCandidate(quality = quality.height, url = url)
+        }
+    }.distinctBy(VideoStreamCandidate::url)
+}

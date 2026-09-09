@@ -21,8 +21,9 @@ import org.example.atvretranslation.data.SecureTokenStore
 import org.example.atvretranslation.data.SubtitleTrack
 import org.example.atvretranslation.data.VideoConstants
 import org.example.atvretranslation.data.VideoQuality
+import org.example.atvretranslation.data.VideoStreamCandidate
+import org.example.atvretranslation.data.buildVideoCandidates
 import org.example.atvretranslation.data.buildVideoUrl
-import org.example.atvretranslation.data.buildVideoUrls
 import org.example.atvretranslation.data.preferredForPlayback
 import org.example.atvretranslation.data.resolveContinueTarget
 import org.example.atvretranslation.data.sortedByPlaybackPriority
@@ -34,8 +35,7 @@ import org.example.atvretranslation.update.UpdateManager
 enum class Screen { HOME, DETAILS, SOURCES, PLAYER }
 
 data class PlaybackRequest(
-    val url: String,
-    val fallbackUrls: List<String>,
+    val videoCandidates: List<VideoStreamCandidate>,
     val title: String,
     val quality: Int,
     val startPositionMs: Long,
@@ -233,7 +233,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val current = snapshot.playback ?: return
         val currentItem = VlcQueueItem(
             title = current.title,
-            upstreamUrl = current.url,
+            upstreamUrl = current.videoCandidates.first().url,
             subtitle = current.subtitles.firstOrNull(),
         )
         val next = findAdjacentEpisode(snapshot.episodes, current.episodeId, forward = true)
@@ -473,42 +473,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         startPositionMs: Long,
     ) {
         val constants = _state.value.constants ?: return setError("Не загружены адреса видеосерверов")
-        runCatching { buildVideoUrls(quality, constants, source.videoDomain) }
-            .onSuccess { urls ->
-                _state.update {
-                    it.copy(
-                        screen = Screen.PLAYER,
-                        playback = PlaybackRequest(
-                            url = urls.first(),
-                            fallbackUrls = urls.drop(1),
-                            title = "${episode.displayName} · ${source.team.name}",
-                            quality = quality.height,
-                            startPositionMs = startPositionMs,
-                            animeId = anime.id,
-                            animeSlug = anime.slug,
-                            animeName = anime.displayName,
-                            animeCover = anime.coverThumbnail ?: anime.cover,
-                            episodeId = episode.id,
-                            episodeNumber = episode.number,
-                            episodeName = episode.name,
-                            episodeItemNumber = episode.itemNumber,
-                            teamId = source.team.id,
-                            translationTypeId = source.translationTypeId,
-                            subtitles = source.subtitles.preferredForPlayback(),
-                            previousEpisodeNumber = findAdjacentEpisode(
-                                episodes = it.episodes,
-                                currentEpisodeId = episode.id,
-                                forward = false,
-                            )?.number,
-                            nextEpisodeNumber = findAdjacentEpisode(
-                                episodes = it.episodes,
-                                currentEpisodeId = episode.id,
-                                forward = true,
-                            )?.number,
-                        ),
-                    )
-                }
+        runCatching {
+            buildVideoCandidates(quality, source.qualities, constants, source.videoDomain)
+        }.onSuccess { candidates ->
+            _state.update {
+                it.copy(
+                    screen = Screen.PLAYER,
+                    playback = PlaybackRequest(
+                        videoCandidates = candidates,
+                        title = "${episode.displayName} · ${source.team.name}",
+                        quality = quality.height,
+                        startPositionMs = startPositionMs,
+                        animeId = anime.id,
+                        animeSlug = anime.slug,
+                        animeName = anime.displayName,
+                        animeCover = anime.coverThumbnail ?: anime.cover,
+                        episodeId = episode.id,
+                        episodeNumber = episode.number,
+                        episodeName = episode.name,
+                        episodeItemNumber = episode.itemNumber,
+                        teamId = source.team.id,
+                        translationTypeId = source.translationTypeId,
+                        subtitles = source.subtitles.preferredForPlayback(),
+                        previousEpisodeNumber = findAdjacentEpisode(
+                            episodes = it.episodes,
+                            currentEpisodeId = episode.id,
+                            forward = false,
+                        )?.number,
+                        nextEpisodeNumber = findAdjacentEpisode(
+                            episodes = it.episodes,
+                            currentEpisodeId = episode.id,
+                            forward = true,
+                        )?.number,
+                    ),
+                )
             }
+        }
             .onFailure { setError(it.message ?: "Не удалось построить URL видео") }
     }
 

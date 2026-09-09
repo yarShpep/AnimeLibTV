@@ -89,6 +89,30 @@ class VideoSelectionTest {
     }
 
     @Test
+    fun `video candidates exhaust selected quality servers before lower quality`() {
+        val constants = VideoConstants(
+            servers = listOf(
+                VideoServer("main", "Основной", "https://video1.example/"),
+                VideoServer("secondary_1", "Резервный", "https://video2.example/"),
+            ),
+            distributionAnimeIds = emptySet(),
+            distributionUrl = "https://distribution.example/",
+        )
+        val selected = VideoQuality(2160, "anime/12/players/7/video_2160.mp4")
+        val available = listOf(
+            VideoQuality(1080, "anime/12/players/7/video_1080.mp4"),
+            selected,
+            VideoQuality(720, "anime/12/players/7/video_720.mp4"),
+        )
+
+        assertEquals(
+            listOf(2160, 2160, 1080, 1080, 720, 720),
+            buildVideoCandidates(selected, available, constants, "secondary_1")
+                .map(VideoStreamCandidate::quality),
+        )
+    }
+
+    @Test
     fun `subtitle variants keep one track per language and prefer ass`() {
         val subtitles = listOf(
             SubtitleTrack("vtt", "https://example/sub.vtt", label = "Русский"),
