@@ -11,7 +11,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import org.example.atvretranslation.ui.AnimeLibTvApp
 import org.example.atvretranslation.ui.AppViewModel
-import org.example.atvretranslation.player.VlcProxyRegistry
 import org.example.atvretranslation.update.UpdateManager
 
 class MainActivity : ComponentActivity() {
@@ -35,11 +34,5 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         UpdateManager.installPendingIfAllowed(this)
-        VlcProxyRegistry.onHostResumed()
-    }
-
-    override fun onDestroy() {
-        if (isFinishing) VlcProxyRegistry.close()
-        super.onDestroy()
     }
 }

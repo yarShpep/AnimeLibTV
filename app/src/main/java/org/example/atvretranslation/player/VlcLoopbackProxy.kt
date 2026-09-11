@@ -4,8 +4,8 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Handler
-import android.os.Looper
+import android.util.Log
+import androidx.core.content.ContextCompat
 import org.example.atvretranslation.data.AnimeLibClient
 import org.example.atvretranslation.data.SubtitleTrack
 import java.io.BufferedInputStream
@@ -16,16 +16,19 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
 import java.net.URI
+import java.net.UnknownHostException
 import java.security.SecureRandom
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 object VlcProxyRegistry {
+    private const val VLC_PACKAGE = "org.videolan.vlc"
+    private const val VLC_VIDEO_ACTIVITY = "org.videolan.vlc.gui.video.VideoPlayerActivity"
     private var proxy: StreamingProxy? = null
-    private var waitingForReturn = false
-    private val handler = Handler(Looper.getMainLooper())
+    private var serviceContext: Context? = null
 
     @Synchronized
     fun open(
@@ -37,42 +40,62 @@ object VlcProxyRegistry {
         val newProxy = StreamingProxy(items)
         proxy = newProxy
         val localUrls = newProxy.start()
-        val intent = Intent(Intent.ACTION_VIEW).apply {
+        serviceContext = context.applicationContext
+        ContextCompat.startForegroundService(
+            context,
+            Intent(context, VlcProxyService::class.java),
+        )
+        val directIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(localUrls.playlist, "application/x-mpegURL")
-            setPackage("org.videolan.vlc")
+            setClassName(VLC_PACKAGE, VLC_VIDEO_ACTIVITY)
+            putExtra("title", items.first().title)
             localUrls.currentSubtitle?.let { putExtra("subtitles_location", it.toString()) }
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         try {
-            context.startActivity(intent)
-            waitingForReturn = true
+            context.startActivity(directIntent)
         } catch (error: ActivityNotFoundException) {
-            close()
-            throw error
+            val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(localUrls.playlist, "application/x-mpegURL")
+                setPackage(VLC_PACKAGE)
+                putExtra("title", items.first().title)
+                localUrls.currentSubtitle?.let { putExtra("subtitles_location", it.toString()) }
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(fallbackIntent)
+            } catch (fallbackError: ActivityNotFoundException) {
+                close()
+                fallbackError.addSuppressed(error)
+                throw fallbackError
+            }
         }
     }
 
     @Synchronized
-    fun onHostResumed() {
-        if (!waitingForReturn) return
-        waitingForReturn = false
-        handler.postDelayed({ close() }, 2_000)
-    }
-
-    @Synchronized
     fun close() {
-        handler.removeCallbacksAndMessages(null)
         proxy?.close()
         proxy = null
-        waitingForReturn = false
+        serviceContext?.stopService(Intent(serviceContext, VlcProxyService::class.java))
+        serviceContext = null
     }
 }
 
 data class VlcQueueItem(
     val title: String,
-    val upstreamUrl: String,
+    val upstreamUrls: List<String>,
     val subtitle: SubtitleTrack? = null,
-)
+) {
+    init {
+        require(upstreamUrls.isNotEmpty())
+    }
+
+    constructor(
+        title: String,
+        upstreamUrl: String,
+        subtitle: SubtitleTrack? = null,
+    ) : this(title, listOf(upstreamUrl), subtitle)
+}
 
 private data class ProxyUrls(val playlist: Uri, val currentSubtitle: Uri?)
 
@@ -126,59 +149,127 @@ private class StreamingProxy(
                     .matchEntire(path)?.groupValues?.get(1)?.toIntOrNull()
                 val subtitleIndex = Regex("^/subtitle/$token/(\\d+)\\.[a-z0-9]+$")
                     .matchEntire(path)?.groupValues?.get(1)?.toIntOrNull()
-                val selectedUpstream = when {
-                    videoIndex != null -> items.getOrNull(videoIndex)?.upstreamUrl
-                    subtitleIndex != null -> items.getOrNull(subtitleIndex)?.subtitle?.src
+                val selectedUpstreams = when {
+                    videoIndex != null -> items.getOrNull(videoIndex)?.upstreamUrls
+                    subtitleIndex != null -> items.getOrNull(subtitleIndex)?.subtitle?.src?.let(::listOf)
                     else -> null
                 } ?: return writeEmpty(output, 404, "Not Found")
                 val clientHeaders = readHeaders(input)
-                val upstream = (URI(selectedUpstream).toURL().openConnection() as HttpURLConnection).apply {
-                    requestMethod = method
-                    connectTimeout = 15_000
-                    readTimeout = 30_000
-                    instanceFollowRedirects = true
-                    setRequestProperty("Referer", "${AnimeLibClient.WEB_ORIGIN}/")
-                    setRequestProperty("Origin", AnimeLibClient.WEB_ORIGIN)
-                    setRequestProperty("User-Agent", AnimeLibClient.USER_AGENT)
-                    setRequestProperty("Accept-Encoding", "identity")
-                    clientHeaders["range"]?.let { setRequestProperty("Range", it) }
-                    clientHeaders["if-range"]?.let { setRequestProperty("If-Range", it) }
-                }
-                try {
-                    val status = upstream.responseCode
-                    val reason = upstream.responseMessage.orEmpty().ifBlank { "Upstream" }
-                    writeAscii(output, "HTTP/1.1 $status ${sanitize(reason)}\r\n")
-                    listOf(
-                        "Content-Type",
-                        "Content-Length",
-                        "Content-Range",
-                        "Accept-Ranges",
-                        "ETag",
-                        "Last-Modified",
-                        "Cache-Control",
-                    ).forEach { name ->
-                        upstream.getHeaderField(name)?.let {
-                            writeAscii(output, "$name: ${sanitize(it)}\r\n")
+                var lastFailure: Throwable? = null
+                retry@ for (attempt in DNS_RETRY_DELAYS_MS.indices) {
+                    var onlyDnsFailures = true
+                    selectedUpstreams.forEachIndexed { index, selectedUpstream ->
+                        val upstream = runCatching {
+                            openUpstream(selectedUpstream, method, clientHeaders)
+                        }.getOrElse { error ->
+                            lastFailure = error
+                            if (error !is UnknownHostException) onlyDnsFailures = false
+                            Log.w(
+                                TAG,
+                                "VLC $method $path upstream ${index + 1}/${selectedUpstreams.size} " +
+                                    "failed (${error.javaClass.simpleName}: ${error.message}); " +
+                                    "range=${clientHeaders["range"]}",
+                            )
+                            return@forEachIndexed
                         }
-                    }
-                    writeAscii(output, "Connection: close\r\n\r\n")
-                    output.flush()
-                    if (method == "GET") {
-                        val body = if (status in 200..399) upstream.inputStream else upstream.errorStream
-                        body?.use { stream ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            while (running.get()) {
-                                val read = stream.read(buffer)
-                                if (read < 0) break
-                                output.write(buffer, 0, read)
-                                output.flush()
+                        onlyDnsFailures = false
+                        try {
+                            if (upstream.responseCode !in 200..399 &&
+                                index < selectedUpstreams.lastIndex
+                            ) {
+                                Log.w(
+                                    TAG,
+                                    "VLC upstream ${index + 1}/${selectedUpstreams.size} returned " +
+                                        upstream.responseCode,
+                                )
+                                return@forEachIndexed
                             }
+                            relayUpstream(upstream, output, method)
+                            return
+                        } finally {
+                            upstream.disconnect()
                         }
                     }
-                } finally {
-                    upstream.disconnect()
+                    val delayMs = DNS_RETRY_DELAYS_MS[attempt]
+                    if (onlyDnsFailures && delayMs > 0 && running.get()) {
+                        Log.w(TAG, "VLC CDN DNS failed; retrying in ${delayMs}ms")
+                        Thread.sleep(delayMs)
+                        continue@retry
+                    }
+                    break@retry
+                }
+                Log.e(TAG, "Every VLC upstream failed", lastFailure)
+                writeEmpty(output, 502, "Bad Gateway")
+            }.onFailure { error ->
+                if (error.isExpectedDisconnect()) {
+                    Log.d(TAG, "VLC closed a proxy request")
+                } else {
+                    Log.e(TAG, "VLC proxy request failed", error)
                 }
             }
+        }
+    }
+
+    private fun Throwable.isExpectedDisconnect(): Boolean =
+        generateSequence(this) { it.cause }.any { cause ->
+            cause is SocketException && cause.message.orEmpty().lowercase().let { message ->
+                message.contains("broken pipe") ||
+                    message.contains("connection reset") ||
+                    message.contains("connection abort")
+            }
+        }
+
+    private fun openUpstream(
+        url: String,
+        method: String,
+        clientHeaders: Map<String, String>,
+    ): HttpURLConnection = (URI(url).toURL().openConnection() as HttpURLConnection).apply {
+        requestMethod = method
+        connectTimeout = 15_000
+        readTimeout = 30_000
+        instanceFollowRedirects = true
+        setRequestProperty("Referer", "${AnimeLibClient.WEB_ORIGIN}/")
+        setRequestProperty("Origin", AnimeLibClient.WEB_ORIGIN)
+        setRequestProperty("User-Agent", AnimeLibClient.USER_AGENT)
+        setRequestProperty("Accept-Encoding", "identity")
+        clientHeaders["range"]?.let { setRequestProperty("Range", it) }
+        clientHeaders["if-range"]?.let { setRequestProperty("If-Range", it) }
+        responseCode
+    }
+
+    private fun relayUpstream(
+        upstream: HttpURLConnection,
+        output: BufferedOutputStream,
+        method: String,
+    ) {
+        val status = upstream.responseCode
+        val reason = upstream.responseMessage.orEmpty().ifBlank { "Upstream" }
+        writeAscii(output, "HTTP/1.1 $status ${sanitize(reason)}\r\n")
+        listOf(
+            "Content-Type",
+            "Content-Length",
+            "Content-Range",
+            "Accept-Ranges",
+            "ETag",
+            "Last-Modified",
+            "Cache-Control",
+        ).forEach { name ->
+            upstream.getHeaderField(name)?.let {
+                writeAscii(output, "$name: ${sanitize(it)}\r\n")
+            }
+        }
+        writeAscii(output, "Connection: close\r\n\r\n")
+        output.flush()
+        if (method != "GET") return
+        val body = if (status in 200..399) upstream.inputStream else upstream.errorStream
+        body?.use { stream ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (running.get()) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                output.write(buffer, 0, read)
+            }
+            output.flush()
         }
     }
 
@@ -242,6 +333,11 @@ private class StreamingProxy(
         if (!running.compareAndSet(true, false)) return
         runCatching { server?.close() }
         workers.shutdownNow()
+    }
+
+    private companion object {
+        const val TAG = "VlcLoopbackProxy"
+        val DNS_RETRY_DELAYS_MS = longArrayOf(1_000, 4_000, 6_000, 0)
     }
 }
 

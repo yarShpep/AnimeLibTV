@@ -74,6 +74,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -804,6 +806,8 @@ private fun PlayerScreen(
     val videoCandidates = request.videoCandidates
     var candidateIndex by remember(videoCandidates) { mutableIntStateOf(0) }
     var playerMessage by remember(videoCandidates) { mutableStateOf<String?>(null) }
+    var decoderFallbackIndex by remember(videoCandidates) { mutableStateOf<Int?>(null) }
+    val vlcChoiceFocus = remember { FocusRequester() }
     val mediaItemForUrl: (String) -> MediaItem = remember(request.subtitles) {
         { url ->
             MediaItem.Builder()
@@ -847,7 +851,8 @@ private fun PlayerScreen(
                 playWhenReady = true
             }
     }
-    val switchToNextCandidate: (Boolean) -> Boolean = { requireLowerQuality ->
+    val switchToNextCandidate: (Boolean, Boolean) -> Boolean =
+        { requireLowerQuality, lowerQualityApproved ->
         val currentCandidate = videoCandidates[candidateIndex]
         val nextIndex = if (requireLowerQuality) {
             videoCandidates.indexOfFirstFrom(candidateIndex + 1) {
@@ -860,17 +865,26 @@ private fun PlayerScreen(
             false
         } else {
             val nextCandidate = videoCandidates[nextIndex]
-            val resumePositionMs = player.currentPosition.coerceAtLeast(request.startPositionMs)
-            candidateIndex = nextIndex
-            playerMessage = if (nextCandidate.quality < currentCandidate.quality) {
-                "${currentCandidate.quality.qualityLabel()} не поддерживается; " +
-                    "включаю ${nextCandidate.quality.qualityLabel()}…"
+            if (
+                currentCandidate.quality >= 2160 &&
+                nextCandidate.quality < currentCandidate.quality &&
+                !lowerQualityApproved
+            ) {
+                player.pause()
+                playerMessage = null
+                decoderFallbackIndex = nextIndex
             } else {
-                "Переключаю видеосервер…"
+                val resumePositionMs = player.currentPosition.coerceAtLeast(request.startPositionMs)
+                candidateIndex = nextIndex
+                playerMessage = if (nextCandidate.quality < currentCandidate.quality) {
+                    "Включаю ${nextCandidate.quality.qualityLabel()}…"
+                } else {
+                    "Переключаю видеосервер…"
+                }
+                player.setMediaItem(mediaItemForUrl(nextCandidate.url), resumePositionMs)
+                player.prepare()
+                player.playWhenReady = true
             }
-            player.setMediaItem(mediaItemForUrl(nextCandidate.url), resumePositionMs)
-            player.prepare()
-            player.playWhenReady = true
             true
         }
     }
@@ -881,7 +895,7 @@ private fun PlayerScreen(
             candidateIndex == attemptedIndex &&
             player.playbackState == Player.STATE_BUFFERING
         ) {
-            if (!switchToNextCandidate(false)) {
+            if (!switchToNextCandidate(false, false)) {
                 playerMessage = "Не удалось загрузить видео ни с одного сервера"
             }
         }
@@ -902,8 +916,8 @@ private fun PlayerScreen(
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                if (error.isDecoderFallbackEligible() && switchToNextCandidate(true)) return
-                if (error.isCdnFallbackEligible() && switchToNextCandidate(false)) return
+                if (error.isDecoderFallbackEligible() && switchToNextCandidate(true, false)) return
+                if (error.isCdnFallbackEligible() && switchToNextCandidate(false, false)) return
                 playerMessage = if (error.isCdnFallbackEligible()) {
                     "Не удалось загрузить видео ни с одного сервера"
                 } else {
@@ -974,6 +988,66 @@ private fun PlayerScreen(
                     .background(Color(0xCC11131A), RoundedCornerShape(8.dp))
                     .padding(horizontal = 18.dp, vertical = 12.dp),
             )
+        }
+        decoderFallbackIndex?.let { fallbackIndex ->
+            val failedQuality = videoCandidates[candidateIndex].quality
+            val fallbackQuality = videoCandidates[fallbackIndex].quality
+            Dialog(
+                onDismissRequest = {},
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xB3000000)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .width(720.dp)
+                            .background(Panel, RoundedCornerShape(18.dp))
+                            .border(1.dp, Color(0xFF343847), RoundedCornerShape(18.dp))
+                            .padding(36.dp),
+                    ) {
+                        Text(
+                            text = "Не удалось воспроизвести ${failedQuality.qualityLabel()}",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = "Открыть серию в VLC или продолжить во встроенном плеере " +
+                                "в ${fallbackQuality.qualityLabel()}?",
+                            color = SoftText,
+                            fontSize = 20.sp,
+                        )
+                        Spacer(Modifier.height(28.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Button(
+                                onClick = {
+                                    decoderFallbackIndex = null
+                                    onOpenVlc()
+                                },
+                                modifier = Modifier.focusRequester(vlcChoiceFocus),
+                                colors = ButtonDefaults.colors(containerColor = Purple),
+                            ) {
+                                Text("Открыть в VLC")
+                            }
+                            Button(
+                                onClick = {
+                                    decoderFallbackIndex = null
+                                    switchToNextCandidate(true, true)
+                                },
+                            ) {
+                                Text("Продолжить в ${fallbackQuality.qualityLabel()}")
+                            }
+                        }
+                    }
+                }
+                LaunchedEffect(fallbackIndex) {
+                    vlcChoiceFocus.requestFocus()
+                }
+            }
         }
     }
 }

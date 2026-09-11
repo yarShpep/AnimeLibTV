@@ -23,7 +23,6 @@ import org.example.atvretranslation.data.VideoConstants
 import org.example.atvretranslation.data.VideoQuality
 import org.example.atvretranslation.data.VideoStreamCandidate
 import org.example.atvretranslation.data.buildVideoCandidates
-import org.example.atvretranslation.data.buildVideoUrl
 import org.example.atvretranslation.data.preferredForPlayback
 import org.example.atvretranslation.data.resolveContinueTarget
 import org.example.atvretranslation.data.sortedByPlaybackPriority
@@ -233,7 +232,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val current = snapshot.playback ?: return
         val currentItem = VlcQueueItem(
             title = current.title,
-            upstreamUrl = current.videoCandidates.first().url,
+            upstreamUrls = current.videoCandidates
+                .filter { it.quality == current.quality }
+                .map(VideoStreamCandidate::url),
             subtitle = current.subtitles.firstOrNull(),
         )
         val next = findAdjacentEpisode(snapshot.episodes, current.episodeId, forward = true)
@@ -256,7 +257,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     currentItem,
                     VlcQueueItem(
                         title = "${loadedEpisode.displayName} · ${source.team.name}",
-                        upstreamUrl = buildVideoUrl(quality, constants),
+                        upstreamUrls = buildVideoCandidates(
+                            quality,
+                            source.qualities,
+                            constants,
+                            source.videoDomain,
+                        ).filter { it.quality == quality.height }
+                            .map(VideoStreamCandidate::url),
                         subtitle = source.subtitles.preferredForPlayback().firstOrNull(),
                     ),
                 ),

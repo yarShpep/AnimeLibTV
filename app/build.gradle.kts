@@ -12,8 +12,8 @@ android {
         applicationId = "org.example.atvretranslation"
         minSdk = 23
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.6.3"
+        versionCode = 17
+        versionName = "0.6.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
