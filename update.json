@@ -1,7 +1,7 @@
 {
-  "versionCode": 16,
-  "versionName": "0.6.3",
-  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.6.3/AnimeLibTV-0.6.3.apk",
-  "sha256": "cb7b23e35a50656ea53224def97e3518ae6fb5cbb46b3c92d3badcae31b82b08",
-  "notes": "При ошибке аппаратного декодера плеер автоматически переходит с неподдерживаемого 4K на следующее доступное качество, сохраняя позицию. Для совместимых серий 4K остаётся приоритетным."
+  "versionCode": 17,
+  "versionName": "0.6.4",
+  "apkUrl": "https://github.com/yarShpep/AnimeLibTV/releases/download/v0.6.4/AnimeLibTV-0.6.4.apk",
+  "sha256": "ebbb9389905b341c47186c59702bd9087751929c212d169c66d9830ab2fb5e5f",
+  "notes": "Исправлена передача 4K во внешний VLC с аппаратным декодированием. Если встроенный плеер не может воспроизвести 4K, приложение предлагает открыть серию в VLC либо продолжить в 1080p."
 }
